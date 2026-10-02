@@ -13,9 +13,13 @@ set -euo pipefail
 CONFIG="${1:-full}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-unset ANDROID_HOME ANDROID_NDK_ROOT ANDROID_NDK_HOME
+# Respect explicitly provisioned SDK/NDK paths (Linux CI and local builds).
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/env.sh"
+JOBS=()
+if [[ "${CMAKE_BUILD_PARALLEL_LEVEL:-}" =~ ^[1-9][0-9]*$ ]]; then
+  JOBS=(-j "$CMAKE_BUILD_PARALLEL_LEVEL")
+fi
 cd "$REPO_ROOT"
 
 # Canonical path: CMake records a resolved one, and comparing an unresolved
@@ -39,7 +43,7 @@ if [ ! -f "$STAGE/base.apk" ] || [ ! -f "$JNI/libblender.so" ]; then
 fi
 
 echo "=== [$CONFIG] compile libblender.so ==="
-ninja -C "$BUILD" blender
+ninja "${JOBS[@]}" -C "$BUILD" blender
 
 echo "=== swap libblender.so into APK ==="
 cp "$BUILD/lib/libblender.so" "$JNI/libblender.so"
@@ -52,8 +56,7 @@ cp "$STAGE/base.apk" "$OUT"
 ( cd "$STAGE" && zip -qr "$OUT" lib )
 "$BT/zipalign" -f -p 4 "$OUT" "$STAGE/fast-aligned.apk"
 mv "$STAGE/fast-aligned.apk" "$OUT"
-"$BT/apksigner" sign --ks "$BUILD_BASE/android-debug.keystore" \
-  --ks-pass pass:android --key-pass pass:android "$OUT"
+BUILD_BASE="$BUILD_BASE" bash "$SCRIPT_DIR/apk/sign.sh" "$OUT"
 
 if [ -n "${FASTDEPLOY_NO_INSTALL:-}" ]; then
   echo "=== built ($CONFIG), install skipped ==="

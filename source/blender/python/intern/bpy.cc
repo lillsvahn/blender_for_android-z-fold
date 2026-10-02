@@ -66,6 +66,11 @@
 #  include "BPy_Freestyle.h"
 #endif
 
+#ifdef __ANDROID__
+/* C++ return type requires the same global namespace as the GHOST definition. */
+std::string GHOST_android_copilot(const char *, const char *);
+#endif
+
 namespace blender {
 
 PyObject *bpy_package_py = nullptr;
@@ -682,7 +687,6 @@ static PyObject *bpy_wm_capabilities(PyObject *self)
 #ifdef __ANDROID__
 extern "C" void GHOST_android_mobile_layout(const float *, int);
 extern "C" int GHOST_android_mobile_state(float *);
-extern "C" std::string GHOST_android_copilot(const char *, const char *);
 
 static PyObject *bpy_android_mobile_layout(PyObject *, PyObject *arg)
 {

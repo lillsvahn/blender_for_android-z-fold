@@ -4373,8 +4373,7 @@ void wm_event_do_handlers(bContext *C)
             region->regiontype == RGN_TYPE_WINDOW &&
             !ui::context_active_but_get(C) && screen->regionbase.is_empty())
         {
-          PointerRNA props;
-          WM_operator_properties_create(&props, "TEXT_OT_insert");
+          PointerRNA props = WM_operator_properties_create("TEXT_OT_insert");
           RNA_string_set(&props, "text", text);
           WM_operator_name_call(C, "TEXT_OT_insert", wm::OpCallContext::ExecDefault, &props, nullptr);
           WM_operator_properties_free(&props);

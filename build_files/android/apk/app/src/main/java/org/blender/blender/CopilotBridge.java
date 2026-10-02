@@ -37,6 +37,7 @@ final class CopilotBridge {
   private final BlenderActivity activity;
   private final AtomicFile keyFile;
   private final ExecutorService executor = Executors.newSingleThreadExecutor();
+  private final ExecutorService canceller = Executors.newSingleThreadExecutor();
   private Future<?> future;
   private volatile HttpsURLConnection connection;
   private long generation = 0;
@@ -263,15 +264,17 @@ final class CopilotBridge {
       }
     }
     catch (Exception ignored) { }
-    return Math.max(1, Math.min(seconds, 7 * 24 * 3600));
+    return Math.max(1, Math.min(seconds, (Long.MAX_VALUE - System.currentTimeMillis()) / 1000));
   }
   private synchronized void stop() {
     generation++; pending = false; result = null;
     if (future != null) { future.cancel(true); future = null; }
     HttpsURLConnection conn = connection; connection = null;
-    if (conn != null) { conn.disconnect(); }
+    // disconnect can wait on an internal network lock. Never wait on it from
+    // Blender's main thread or Android's lifecycle/UI thread.
+    if (conn != null) { canceller.execute(conn::disconnect); }
   }
   synchronized void pause() { paused = true; stop(); }
   synchronized void resume() { paused = false; }
-  synchronized void close() { pause(); executor.shutdownNow(); }
+  synchronized void close() { pause(); executor.shutdownNow(); canceller.shutdown(); }
 }

@@ -137,7 +137,7 @@ def sh(script: str) -> None:
 def env_from_env_sh() -> dict[str, str]:
     """env.sh owns the SDK/NDK locations; read them rather than guessing."""
     out = subprocess.run(
-        ["bash", "-c", f"unset ANDROID_HOME; source '{SCRIPT_DIR / 'env.sh'}' >/dev/null && env"],
+        ["bash", "-c", f"source '{SCRIPT_DIR / 'env.sh'}' >/dev/null && env"],
         check=True,
         capture_output=True,
         text=True,
@@ -306,7 +306,6 @@ def inject_validation_layer(config: str) -> None:
     """
     env = tool_env()
     build_tools = Path(env["ANDROID_HOME"]) / "build-tools" / "35.0.1"
-    keystore = BUILD_BASE / "android-debug.keystore"
     stage = stage_dir(config)
     apk = apk_path(config)
 
@@ -316,13 +315,7 @@ def inject_validation_layer(config: str) -> None:
     aligned = stage / "aligned.apk"
     run([str(build_tools / "zipalign"), "-f", "-p", "4", str(apk), str(aligned)], env=env)
     aligned.replace(apk)
-    run([
-        str(build_tools / "apksigner"), "sign",
-        "--ks", str(keystore),
-        "--ks-pass", "pass:android",
-        "--key-pass", "pass:android",
-        str(apk),
-    ], env=env)
+    run(["bash", str(SCRIPT_DIR / "apk" / "sign.sh"), str(apk)], env=env)
     print("validation layer bundled; enable it with --enable-validation-layers")
 
 

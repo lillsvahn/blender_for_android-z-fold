@@ -15,11 +15,13 @@ case "$CONFIG" in lite|full) ;; *) echo "usage: $0 [lite|full]" >&2; exit 1;; es
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-# Drop any leaked Android Studio SDK/NDK paths so env.sh picks the Homebrew ones
-# (Studio's SDK lacks our build-tools/NDK version).
-unset ANDROID_HOME ANDROID_NDK_ROOT ANDROID_NDK_HOME
+# Respect explicitly provisioned SDK/NDK paths (Linux CI and local builds).
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/env.sh"
+JOBS=()
+if [[ "${CMAKE_BUILD_PARALLEL_LEVEL:-}" =~ ^[1-9][0-9]*$ ]]; then
+  JOBS=(-j "$CMAKE_BUILD_PARALLEL_LEVEL")
+fi
 cd "$REPO_ROOT"
 
 # Canonical path: CMake records a resolved one, and comparing an unresolved
@@ -52,7 +54,7 @@ cmake -S . -B "$HOST" -G Ninja -C "$FEATURES" -DWITH_CROSSCOMPILED_TOOLS=OFF \
   -DCMAKE_C_COMPILER="$ANDROID_HOST_CC" -DCMAKE_CXX_COMPILER="$ANDROID_HOST_CXX" \
   -DWITH_HEADLESS=ON -DWITH_X11_XINPUT=OFF -DWITH_AUDASPACE=OFF \
   -DCMAKE_BUILD_RPATH="$REPO_ROOT/lib/linux_x64/tbb/lib"
-ninja -C "$HOST" makesdna makesrna datatoc msgfmt shader_tool
+ninja "${JOBS[@]}" -C "$HOST" makesdna makesrna datatoc msgfmt shader_tool
 
 echo "=== [$CONFIG] configure + build libblender.so ==="
 cmake -S . -B "$BUILD" -G Ninja \
@@ -62,7 +64,7 @@ cmake -S . -B "$BUILD" -G Ninja \
   -DBLENDER_ANDROID_CONFIG="$CONFIG"
 # The glTF add-on dlopens the meshopt bridge at run time, so it is not a
 # dependency of the blender target and would never be built otherwise.
-ninja -C "$BUILD" blender bf_intern_meshopt_bridge bf_intern_draco_bridge
+ninja "${JOBS[@]}" -C "$BUILD" blender bf_intern_meshopt_bridge bf_intern_draco_bridge
 
 echo "=== [$CONFIG] package APK ==="
 BLENDER_ANDROID_CONFIG="$CONFIG" BUILD="$BUILD" bash "$SCRIPT_DIR/apk/package.sh"

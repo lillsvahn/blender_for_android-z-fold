@@ -1,0 +1,84 @@
+name: Z Fold Full ARM64 APK (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zfold-full-arm64
+  cancel-in-progress: false
+
+jobs:
+  full-arm64:
+    # Standard ubuntu-latest guarantees 14 GB SSD, below the documented ~60 GB
+    # workspace. Register a provisioned ephemeral runner with this custom label.
+    runs-on: [self-hosted, linux, x64, blender-android]
+    timeout-minutes: 1440
+    env:
+      BUILD_BASE: ${{ runner.temp }}/zfold-build
+      BLENDER_ANDROID_KEYSTORE: ${{ runner.temp }}/zfold-signing.jks
+      BLENDER_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ZFOLD_KEYSTORE_PASSWORD }}
+      BLENDER_ANDROID_KEY_ALIAS: ${{ secrets.ZFOLD_KEY_ALIAS }}
+      BLENDER_ANDROID_KEY_PASSWORD: ${{ secrets.ZFOLD_KEY_PASSWORD }}
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      ANDROID_ABI: arm64-v8a
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: zfold-v0.1.0
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Restore persistent signing identity
+        env:
+          ZFOLD_KEYSTORE_BASE64: ${{ secrets.ZFOLD_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ZFOLD_KEYSTORE_BASE64"
+          umask 077
+          printf '%s' "$ZFOLD_KEYSTORE_BASE64" | base64 --decode > "$BLENDER_ANDROID_KEYSTORE"
+      - name: Check provisioned runner before any expensive work
+        run: python3 build_files/android/zfold_preflight.py
+      - name: Verify signing alias and keystore password
+        run: |
+          keytool -list -keystore "$BLENDER_ANDROID_KEYSTORE" \
+            -storepass:env BLENDER_ANDROID_KEYSTORE_PASSWORD -alias "$BLENDER_ANDROID_KEY_ALIAS" > /dev/null
+      - name: Cheap checks before dependencies
+        run: python3 build_files/android/tests/run_checks.py
+      - name: Fetch public LFS assets and pinned Linux host libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          git lfs install --local
+          git config lfs.url https://projects.blender.org/blender/blender.git/info/lfs
+          git config credential.helper '!f() { echo username=; echo password=; }; f'
+          git lfs pull
+          GIT_LFS_SKIP_SMUDGE=1 git -c submodule.lib/linux_x64.update=checkout submodule update --init lib/linux_x64
+          git -C lib/linux_x64 config credential.helper '!f() { echo username=; echo password=; }; f'
+          git -C lib/linux_x64 lfs pull
+          df -h "$BUILD_BASE"
+      - name: Build ARM64 dependencies once
+        run: bash build_files/android/deps/build.sh
+      - name: Full configure, compile and fresh runtime package
+        run: python3 build_files/android/build.py full --reconfigure --repackage --no-archive
+      - name: Verify signature and packaged Z Fold runtime
+        shell: bash
+        run: |
+          python3 build_files/android/tests/check_apk.py "$BUILD_BASE/android_apk_stage_full/blender-full.apk"
+          "$ANDROID_HOME/build-tools/35.0.1/apksigner" verify "$BUILD_BASE/android_apk_stage_full/blender-full.apk"
+          df -h "$BUILD_BASE"
+      - name: Keep only the finished APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-zfold-v0.1.0-full-arm64
+          path: ${{ runner.temp }}/zfold-build/android_apk_stage_full/blender-full.apk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - name: Remove temporary signing material
+        if: always()
+        shell: bash
+        run: rm -f "$BLENDER_ANDROID_KEYSTORE"

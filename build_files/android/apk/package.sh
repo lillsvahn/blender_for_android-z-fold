@@ -287,15 +287,9 @@ cp "$STAGE/base.apk" "$OUT"
 ( cd "$STAGE" && zip -qr "$OUT" lib )
 
 echo "[apk] signing"
-KS="$BUILD_BASE/android-debug.keystore"  # persistent: stable signature across runs
-if [ ! -f "$KS" ]; then
-  "$JAVA_HOME/bin/keytool" -genkeypair -keystore "$KS" -storepass android \
-    -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-    -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
-fi
 "$BT/zipalign" -f -p 4 "$OUT" "$STAGE/blender-aligned.apk"
 mv "$STAGE/blender-aligned.apk" "$OUT"
-"$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android "$OUT"
+BUILD_BASE="$BUILD_BASE" bash "$SCRIPT_DIR/sign.sh" "$OUT"
 
 echo "[apk] done -> $OUT"
 ls -lh "$OUT"

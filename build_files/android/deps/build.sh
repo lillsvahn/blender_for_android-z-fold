@@ -55,6 +55,10 @@ host_python() {
 # Android scripts used the macOS sysctl spelling unconditionally, which makes
 # every make-based dependency fail immediately on Linux/WSL.
 build_jobs() {
+  if [[ "${CMAKE_BUILD_PARALLEL_LEVEL:-}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$CMAKE_BUILD_PARALLEL_LEVEL"
+    return
+  fi
   if command -v nproc >/dev/null 2>&1; then
     nproc
   else
@@ -769,7 +773,7 @@ EOF
   ( cd "$src" && meson setup build-android --cross-file "$cross" \
       --prefix="$LIBDIR/rubberband" --libdir lib --default-library=shared \
       -Dauto_features=disabled -Dfft=kissfft -Dresampler=builtin &&
-    ninja -C build-android && ninja -C build-android install )
+    ninja -j"$(build_jobs)" -C build-android && ninja -j"$(build_jobs)" -C build-android install )
   echo "[deps] installed rubberband -> $LIBDIR/rubberband"
 }
 
@@ -802,7 +806,7 @@ endian = 'little'
 EOF
   ( cd "$src" && meson setup build-android --cross-file "$cross" \
       --prefix="$LIBDIR/fribidi" -Ddocs=false -Dtests=false -Dbin=false --default-library=shared &&
-    ninja -C build-android && ninja -C build-android install )
+    ninja -j"$(build_jobs)" -C build-android && ninja -j"$(build_jobs)" -C build-android install )
   echo "[deps] installed fribidi -> $LIBDIR/fribidi"
 }
 
@@ -1283,8 +1287,8 @@ EOF
     -Dtools= \
     -Dtests=false \
     -Dstatic=true
-  ninja -C "$build"
-  ninja -C "$build" install
+  ninja -j"$(build_jobs)" -C "$build"
+  ninja -j"$(build_jobs)" -C "$build" install
   echo "[deps] installed thorvg -> $LIBDIR/thorvg"
 }
 

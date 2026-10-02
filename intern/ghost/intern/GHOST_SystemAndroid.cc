@@ -1082,12 +1082,18 @@ static GHOST_TSuccess android_call_activity_void(android_app *app, const char *m
     return GHOST_kFailure;
   }
   jobject activity = app->activity->clazz;
-  jmethodID mid = env->GetMethodID(env->GetObjectClass(activity), method, "()V");
+  jclass cls = env->GetObjectClass(activity);
+  jmethodID mid = env->GetMethodID(cls, method, "()V");
+  env->DeleteLocalRef(cls);
   if (!mid) {
     env->ExceptionClear();
     return GHOST_kFailure;
   }
   env->CallVoidMethod(activity, mid);
+  if (env->ExceptionCheck()) {
+    env->ExceptionClear();
+    return GHOST_kFailure;
+  }
   return GHOST_kSuccess;
 }
 
@@ -1152,7 +1158,7 @@ extern "C" int GHOST_android_mobile_state(float *rows)
 {
   return g_mobile.state(rows);
 }
-extern "C" std::string GHOST_android_copilot(const char *action, const char *payload)
+std::string GHOST_android_copilot(const char *action, const char *payload)
 {
   android_app *app = g_android_app;
   if (!app || !app->activity) { return "{\"ok\":false,\"error\":\"Activity unavailable\"}"; }
