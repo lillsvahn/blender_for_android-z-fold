@@ -7,6 +7,7 @@
  */
 
 #include "GHOST_SystemAndroid.hh"
+#include "GHOST_AndroidMobile.hh"
 #include "GHOST_WindowAndroid.hh"
 
 #include "GHOST_AndroidMemoryTier.hh"
@@ -36,6 +37,7 @@
 #include <ctime>
 
 static android_app *g_android_app = nullptr;
+static GHOST_AndroidMobile g_mobile;
 
 /* Hold a finger this long without moving to get a right-click. */
 static constexpr uint64_t TOUCH_LONG_PRESS_MS = 500;
@@ -229,6 +231,12 @@ void GHOST_SystemAndroid::handleNativeWindowInit(android_app *app)
 
 void GHOST_SystemAndroid::handleWindowFocus(bool gained)
 {
+  if (!gained) {
+    g_mobile.cancel();
+    touchCancelPending();
+    touchEndPan();
+    gesture_active_ = false;
+  }
   if (!window_) {
     return;
   }
@@ -250,6 +258,7 @@ void GHOST_SystemAndroid::handleWindowFocus(bool gained)
 
 void GHOST_SystemAndroid::handleNativeWindowResize()
 {
+  g_mobile.layout(nullptr, 0);
   if (!window_ || !app_ || !app_->window) {
     return;
   }
@@ -267,6 +276,7 @@ void GHOST_SystemAndroid::handleNativeWindowResize()
 
 void GHOST_SystemAndroid::handleNativeWindowTerm()
 {
+  g_mobile.layout(nullptr, 0);
   __android_log_print(
       ANDROID_LOG_INFO, "blender-surface", "TERM_WINDOW ghost_window=%p", (void *)window_);
   if (window_) {
@@ -274,10 +284,10 @@ void GHOST_SystemAndroid::handleNativeWindowTerm()
   }
 }
 
-static GHOST_TabletData tablet_from_event(AInputEvent *event)
+static GHOST_TabletData tablet_from_event(AInputEvent *event, size_t pointer)
 {
   GHOST_TabletData tablet = GHOST_TABLET_DATA_NONE;
-  switch (AMotionEvent_getToolType(event, 0)) {
+  switch (AMotionEvent_getToolType(event, pointer)) {
     case AMOTION_EVENT_TOOL_TYPE_STYLUS:
       tablet.Active = GHOST_kTabletModeStylus;
       break;
@@ -287,9 +297,9 @@ static GHOST_TabletData tablet_from_event(AInputEvent *event)
     default:
       return tablet;
   }
-  tablet.Pressure = AMotionEvent_getPressure(event, 0);
-  const float tilt = AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_TILT, 0);
-  const float orient = AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_ORIENTATION, 0);
+  tablet.Pressure = AMotionEvent_getPressure(event, pointer);
+  const float tilt = AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_TILT, pointer);
+  const float orient = AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_ORIENTATION, pointer);
   tablet.Xtilt = std::sin(orient) * (tilt / float(M_PI_2));
   tablet.Ytilt = -std::cos(orient) * (tilt / float(M_PI_2));
   return tablet;
@@ -312,8 +322,9 @@ int32_t GHOST_SystemAndroid::handleInputEvent(AInputEvent *event)
 
 int32_t GHOST_SystemAndroid::handleMotionEvent(AInputEvent *event)
 {
-  const int32_t action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
-  const size_t count = AMotionEvent_getPointerCount(event);
+  int32_t action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
+  const size_t raw_count = AMotionEvent_getPointerCount(event);
+  size_t count = raw_count;
 
   const int32_t tool_type = count > 0 ? AMotionEvent_getToolType(event, 0) :
                                         AMOTION_EVENT_TOOL_TYPE_UNKNOWN;
@@ -367,6 +378,72 @@ int32_t GHOST_SystemAndroid::handleMotionEvent(AInputEvent *event)
     return 1;
   }
 
+  /* Separate finger ownership BEFORE interpreting any legacy pan/pinch. A
+   * stick never contributes to a gesture, and an outside finger still reaches
+   * the existing editor path when both sticks are held. S Pen isn't claimed. */
+  const size_t changed = size_t((AMotionEvent_getAction(event) &
+                                 AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
+                                AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
+  if (action == AMOTION_EVENT_ACTION_CANCEL) { g_mobile.cancel(); }
+  if (action == AMOTION_EVENT_ACTION_DOWN || action == AMOTION_EVENT_ACTION_POINTER_DOWN) {
+    if (changed < raw_count &&
+        AMotionEvent_getToolType(event, changed) == AMOTION_EVENT_TOOL_TYPE_FINGER)
+    {
+      g_mobile.down(AMotionEvent_getPointerId(event, changed),
+                    ghost_android_scale_input(AMotionEvent_getX(event, changed)),
+                    ghost_android_scale_input(AMotionEvent_getY(event, changed)));
+    }
+  }
+  std::vector<size_t> regular;
+  bool owned_changed = false;
+  for (size_t i = 0; i < raw_count; i++) {
+    const int id = AMotionEvent_getPointerId(event, i);
+    if (g_mobile.owns(id)) {
+      g_mobile.move(id, ghost_android_scale_input(AMotionEvent_getX(event, i)),
+                        ghost_android_scale_input(AMotionEvent_getY(event, i)));
+      if (i == changed) { owned_changed = true; }
+    }
+    else { regular.push_back(i); }
+  }
+  if (action == AMOTION_EVENT_ACTION_UP || action == AMOTION_EVENT_ACTION_POINTER_UP ||
+      action == AMOTION_EVENT_ACTION_CANCEL)
+  {
+    for (size_t i = 0; i < raw_count; i++) {
+      if (action == AMOTION_EVENT_ACTION_CANCEL || i == changed) {
+        g_mobile.up(AMotionEvent_getPointerId(event, i),
+                    ghost_android_scale_input(AMotionEvent_getX(event, i)),
+                    ghost_android_scale_input(AMotionEvent_getY(event, i)));
+      }
+    }
+  }
+  count = regular.size();
+  if (count == 0) { return 1; }
+  if ((action == AMOTION_EVENT_ACTION_POINTER_DOWN ||
+       action == AMOTION_EVENT_ACTION_POINTER_UP) && owned_changed)
+  {
+    return 1;
+  }
+  if (count == 1) {
+    if (action == AMOTION_EVENT_ACTION_POINTER_DOWN) { action = AMOTION_EVENT_ACTION_DOWN; }
+    if (action == AMOTION_EVENT_ACTION_POINTER_UP) { action = AMOTION_EVENT_ACTION_UP; }
+  }
+  const size_t pointer = regular[0];
+  if (count >= 2) {
+    float cx = 0, cy = 0;
+    bool fingers = true;
+    for (size_t i : regular) {
+      cx += ghost_android_scale_input(AMotionEvent_getX(event, i));
+      cy += ghost_android_scale_input(AMotionEvent_getY(event, i));
+      fingers &= AMotionEvent_getToolType(event, i) == AMOTION_EVENT_TOOL_TYPE_FINGER;
+    }
+    if (fingers && g_mobile.inside(cx / count, cy / count)) {
+      touchCancelPending();
+      touchEndPan();
+      gesture_active_ = false;
+      return 1; /* Mobile mode never emits pinch magnify or legacy orbit. */
+    }
+  }
+
   /* Three-finger drag: "Move the view" (Shift + middle mouse). Two fingers already orbit, so the
    * third finger is what buys the viewport a dedicated pan. Finish immediately when one of the
    * three fingers is lifted so a following two-finger gesture starts with clean state. */
@@ -376,8 +453,8 @@ int32_t GHOST_SystemAndroid::handleMotionEvent(AInputEvent *event)
     }
     float cx = 0.0f, cy = 0.0f;
     for (int i = 0; i < 3; i++) {
-      cx += ghost_android_scale_input(AMotionEvent_getX(event, i));
-      cy += ghost_android_scale_input(AMotionEvent_getY(event, i));
+      cx += ghost_android_scale_input(AMotionEvent_getX(event, regular[size_t(i)]));
+      cy += ghost_android_scale_input(AMotionEvent_getY(event, regular[size_t(i)]));
     }
     const int32_t x = int32_t(cx / 3.0f);
     const int32_t y = int32_t(cy / 3.0f);
@@ -411,10 +488,10 @@ int32_t GHOST_SystemAndroid::handleMotionEvent(AInputEvent *event)
    * be classified. */
   if (count >= 2) {
     touchCancelPending();
-    const float x0 = ghost_android_scale_input(AMotionEvent_getX(event, 0)),
-                y0 = ghost_android_scale_input(AMotionEvent_getY(event, 0));
-    const float x1 = ghost_android_scale_input(AMotionEvent_getX(event, 1)),
-                y1 = ghost_android_scale_input(AMotionEvent_getY(event, 1));
+    const float x0 = ghost_android_scale_input(AMotionEvent_getX(event, pointer)),
+                y0 = ghost_android_scale_input(AMotionEvent_getY(event, pointer));
+    const float x1 = ghost_android_scale_input(AMotionEvent_getX(event, regular[1])),
+                y1 = ghost_android_scale_input(AMotionEvent_getY(event, regular[1]));
     const float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f;
     const float dist = std::hypot(x1 - x0, y1 - y0);
 
@@ -483,9 +560,9 @@ int32_t GHOST_SystemAndroid::handleMotionEvent(AInputEvent *event)
   /* On proximity exit the stylus leaves range; report no tablet. */
   const bool hover_exit = action == AMOTION_EVENT_ACTION_HOVER_EXIT;
   const GHOST_TabletData tablet = hover_exit ? GHOST_TABLET_DATA_NONE :
-                                              tablet_from_event(event);
-  int32_t x = int32_t(ghost_android_scale_input(AMotionEvent_getX(event, 0)));
-  int32_t y = int32_t(ghost_android_scale_input(AMotionEvent_getY(event, 0)));
+                                              tablet_from_event(event, pointer);
+  int32_t x = int32_t(ghost_android_scale_input(AMotionEvent_getX(event, pointer)));
+  int32_t y = int32_t(ghost_android_scale_input(AMotionEvent_getY(event, pointer)));
   meta_state_ = AMotionEvent_getMetaState(event);
 
   /* A pointer that leaves proximity simply stops sending events, so reporting its last
@@ -742,13 +819,13 @@ void GHOST_SystemAndroid::handleTextInput(const char *utf8_string)
     return;
   }
   std::scoped_lock lock(java_input_mutex_);
-  java_text_.push_back(utf8_string);
+  java_input_.push_back({utf8_string, {}, true});
 }
 
 void GHOST_SystemAndroid::handleJavaKeyEvent(int32_t keycode, int32_t action, int32_t meta_state)
 {
   std::scoped_lock lock(java_input_mutex_);
-  java_keys_.push_back({keycode, action, meta_state});
+  java_input_.push_back({{}, {keycode, action, meta_state}, false});
 }
 
 void GHOST_SystemAndroid::handleOpenMainFile(const char *path)
@@ -762,23 +839,23 @@ void GHOST_SystemAndroid::handleOpenMainFile(const char *path)
 
 void GHOST_SystemAndroid::drainJavaInput()
 {
-  std::vector<std::string> text;
-  std::vector<JavaKeyEvent> keys;
+  std::vector<JavaInput> input;
   std::vector<std::string> open_files;
   {
     std::scoped_lock lock(java_input_mutex_);
-    if (java_text_.empty() && java_keys_.empty() && java_open_files_.empty()) {
+    if (java_input_.empty() && java_open_files_.empty()) {
       return;
     }
-    text.swap(java_text_);
-    keys.swap(java_keys_);
+    input.swap(java_input_);
     open_files.swap(java_open_files_);
   }
-  for (const std::string &string : text) {
-    dispatchTextInput(string.c_str());
-  }
-  for (const JavaKeyEvent &key : keys) {
-    dispatchJavaKeyEvent(key.keycode, key.action, key.meta_state);
+  for (const JavaInput &item : input) {
+    if (item.is_text) {
+      dispatchTextInput(item.text.c_str());
+    }
+    else {
+      dispatchJavaKeyEvent(item.key.keycode, item.key.action, item.key.meta_state);
+    }
   }
   for (const std::string &path : open_files) {
     /* The handler in `wm_window.cc` drops any event without a valid window; before
@@ -798,6 +875,13 @@ void GHOST_SystemAndroid::drainJavaInput()
 void GHOST_SystemAndroid::dispatchTextInput(const char *utf8_string)
 {
   if (!window_ || !utf8_string) {
+    return;
+  }
+  if (strchr(utf8_string, '\n') || strchr(utf8_string, '\r')) {
+    pushEvent(std::make_unique<GHOST_EventString>(getMilliSeconds(),
+                                                GHOST_kEventAndroidText,
+                                                window_,
+                                                strdup(utf8_string)));
     return;
   }
   for (const char *p = utf8_string; *p;) {
@@ -1053,4 +1137,43 @@ GHOST_TSuccess GHOST_SystemAndroid::popupOnScreenKeyboard(GHOST_IWindow * /*wind
 GHOST_TSuccess GHOST_SystemAndroid::hideOnScreenKeyboard(GHOST_IWindow * /*window*/)
 {
   return android_call_activity_void(app_, "hideKeyboard");
+}
+
+
+extern "C" void GHOST_android_toggle_keyboard()
+{
+  android_call_activity_void(g_android_app, "toggleKeyboard");
+}
+extern "C" void GHOST_android_mobile_layout(const float *rows, int count)
+{
+  g_mobile.layout(rows, count);
+}
+extern "C" int GHOST_android_mobile_state(float *rows)
+{
+  return g_mobile.state(rows);
+}
+extern "C" std::string GHOST_android_copilot(const char *action, const char *payload)
+{
+  android_app *app = g_android_app;
+  if (!app || !app->activity) { return "{\"ok\":false,\"error\":\"Activity unavailable\"}"; }
+  JNIEnv *env = android_jni_env(app);
+  if (!env) { return "{\"ok\":false}"; }
+  jobject activity = app->activity->clazz;
+  jclass cls = env->GetObjectClass(activity);
+  jmethodID method = env->GetMethodID(cls, "copilotCall",
+      "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
+  jstring a = env->NewStringUTF(action);
+  jstring p = env->NewStringUTF(payload); /* ASCII JSON from json.dumps(ensure_ascii=True). */
+  jstring result = method ? static_cast<jstring>(env->CallObjectMethod(activity, method, a, p)) : nullptr;
+  std::string value = "{\"ok\":false,\"error\":\"Android bridge failed\"}";
+  if (!env->ExceptionCheck() && result) {
+    const char *chars = env->GetStringUTFChars(result, nullptr);
+    if (chars) { value = chars; env->ReleaseStringUTFChars(result, chars); }
+  }
+  if (env->ExceptionCheck()) { env->ExceptionClear(); }
+  if (result) { env->DeleteLocalRef(result); }
+  env->DeleteLocalRef(a);
+  env->DeleteLocalRef(p);
+  env->DeleteLocalRef(cls);
+  return value;
 }

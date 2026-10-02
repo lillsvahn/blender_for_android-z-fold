@@ -105,6 +105,8 @@ PAYLOAD="$STAGE/payload"
 mkdir -p "$ASSETS" "$PAYLOAD"
 cp -R "$REPO_ROOT/release/datafiles" "$PAYLOAD/datafiles"
 cp -R "$REPO_ROOT/scripts" "$PAYLOAD/scripts"
+# Never package host Python bytecode from source-side checks.
+find "$PAYLOAD/scripts" -type d -name __pycache__ -prune -exec rm -rf {} +
 
 # The essentials asset library. Since 4.3 a brush is an asset rather than code,
 # so without this there is not one brush in sculpt, texture paint, vertex paint,
@@ -246,7 +248,7 @@ echo "[apk] compiling BlenderActivity"
 mkdir -p "$STAGE/javac" "$STAGE/dex"
 "$JAVA_HOME/bin/javac" -classpath "$ANDROID_JAR" -source 17 -target 17 \
   -d "$STAGE/javac" \
-  "$SCRIPT_DIR/app/src/main/java/org/blender/blender/BlenderActivity.java"
+  "$SCRIPT_DIR"/app/src/main/java/org/blender/blender/*.java
 "$BT/d8" --min-api "$ANDROID_API" --output "$STAGE/dex" \
   $(find "$STAGE/javac" -name '*.class')
 

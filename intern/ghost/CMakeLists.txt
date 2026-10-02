@@ -179,6 +179,7 @@ elseif(WITH_GHOST_ANDROID)
     intern/GHOST_SystemPathsAndroid.cc
     intern/GHOST_WindowAndroid.cc
 
+    intern/GHOST_AndroidMobile.hh
     intern/GHOST_SystemAndroid.hh
     intern/GHOST_SystemPathsAndroid.hh
     intern/GHOST_WindowAndroid.hh

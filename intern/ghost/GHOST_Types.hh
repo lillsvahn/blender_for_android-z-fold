@@ -371,6 +371,7 @@ enum GHOST_TEventType {
   GHOST_kEventDraggingExited,
   GHOST_kEventDraggingDropDone,
 
+  GHOST_kEventAndroidText, /* Android IME bulk text, preserving multiline paste. */
   GHOST_kEventOpenMainFile, /* Needed for Cocoa to open double-clicked .blend file at startup. */
   GHOST_kEventNativeResolutionChange, /* Needed for Cocoa when window moves to other display. */
 

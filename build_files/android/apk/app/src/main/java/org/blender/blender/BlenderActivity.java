@@ -73,6 +73,7 @@ public class BlenderActivity extends NativeActivity {
   private static final String PYTHON_BIN_LIB = "libpython3_13_bin.so";
 
   private InputView inputView;
+  private CopilotBridge copilot;
 
   private native void nativeOnCommitText(String text);
   private native void nativeOnKey(int keycode, int action, int metaState);
@@ -94,6 +95,7 @@ public class BlenderActivity extends NativeActivity {
 
     inputView = new InputView(this);
     addContentView(inputView, new ViewGroup.LayoutParams(1, 1));
+    copilot = new CopilotBridge(this);
   }
 
   /* Scoped storage confines the app to its sandbox, but Blender opens and saves
@@ -588,6 +590,42 @@ public class BlenderActivity extends NativeActivity {
     });
   }
 
+  public void toggleKeyboard() {
+    runOnUiThread(() -> {
+      android.view.WindowInsets insets = inputView.getRootWindowInsets();
+      if (insets != null && insets.isVisible(android.view.WindowInsets.Type.ime())) {
+        hideKeyboard();
+      }
+      else {
+        showKeyboard();
+      }
+    });
+  }
+
+  /* JSON only; the key never crosses this boundary into Python or the model context. */
+  public String copilotCall(String action, String payload) {
+    return copilot == null ? "{\"ok\":false,\"error\":\"Android bridge is not ready\"}" :
+                             copilot.call(action, payload);
+  }
+
+  @Override
+  protected void onPause() {
+    if (copilot != null) { copilot.pause(); }
+    super.onPause();
+  }
+
+  @Override
+  protected void onResume() {
+    super.onResume();
+    if (copilot != null) { copilot.resume(); }
+  }
+
+  @Override
+  protected void onDestroy() {
+    if (copilot != null) { copilot.close(); }
+    super.onDestroy();
+  }
+
   /** Invisible view whose InputConnection captures IME text. */
   private class InputView extends View {
     InputView(Context context) {
@@ -603,8 +641,10 @@ public class BlenderActivity extends NativeActivity {
 
     @Override
     public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
-      outAttrs.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
-      outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_FULLSCREEN;
+      outAttrs.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                           | InputType.TYPE_TEXT_FLAG_MULTI_LINE;
+      outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_FULLSCREEN
+                            | EditorInfo.IME_FLAG_NO_ENTER_ACTION;
 
       return new BaseInputConnection(this, false) {
         /* Text the IME is still composing -- the underlined word being typed.
@@ -650,7 +690,7 @@ public class BlenderActivity extends NativeActivity {
 
         @Override
         public boolean setComposingText(CharSequence text, int newCursorPosition) {
-          replaceComposing(text.toString());
+          replaceComposing(text.toString().replace("\r\n", "\n").replace('\r', '\n'));
           return true;
         }
 
@@ -665,7 +705,7 @@ public class BlenderActivity extends NativeActivity {
         public boolean commitText(CharSequence text, int newCursorPosition) {
           /* Usually the composition unchanged, but autocorrect and suggestions
            * commit something different -- diffing covers both. */
-          replaceComposing(text.toString());
+          replaceComposing(text.toString().replace("\r\n", "\n").replace('\r', '\n'));
           composing = "";
           return true;
         }
@@ -686,7 +726,38 @@ public class BlenderActivity extends NativeActivity {
             nativeOnKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_DOWN, 0);
             nativeOnKey(KeyEvent.KEYCODE_DEL, KeyEvent.ACTION_UP, 0);
           }
+          for (int i = 0; i < afterLength; i++) {
+            nativeOnKey(KeyEvent.KEYCODE_FORWARD_DEL, KeyEvent.ACTION_DOWN, 0);
+            nativeOnKey(KeyEvent.KEYCODE_FORWARD_DEL, KeyEvent.ACTION_UP, 0);
+          }
           return true;
+        }
+
+        @Override
+        public boolean deleteSurroundingTextInCodePoints(int beforeLength, int afterLength) {
+          return deleteSurroundingText(beforeLength, afterLength);
+        }
+
+        @Override
+        public boolean performEditorAction(int actionCode) {
+          composing = "";
+          nativeOnKey(KeyEvent.KEYCODE_ENTER, KeyEvent.ACTION_DOWN, 0);
+          nativeOnKey(KeyEvent.KEYCODE_ENTER, KeyEvent.ACTION_UP, 0);
+          return true;
+        }
+
+        @Override
+        public boolean performContextMenuAction(int id) {
+          if (id == android.R.id.paste || id == android.R.id.pasteAsPlainText) {
+            composing = "";
+            // Reuse Blender's existing Paste operator and Android clipboard bridge.
+            nativeOnKey(KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.ACTION_DOWN, KeyEvent.META_CTRL_ON);
+            nativeOnKey(KeyEvent.KEYCODE_V, KeyEvent.ACTION_DOWN, KeyEvent.META_CTRL_ON);
+            nativeOnKey(KeyEvent.KEYCODE_V, KeyEvent.ACTION_UP, KeyEvent.META_CTRL_ON);
+            nativeOnKey(KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.ACTION_UP, 0);
+            return true;
+          }
+          return super.performContextMenuAction(id);
         }
       };
     }

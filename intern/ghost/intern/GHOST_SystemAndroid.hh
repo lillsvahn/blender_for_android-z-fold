@@ -57,8 +57,7 @@ class GHOST_SystemAndroid : public GHOST_System {
 
   uint16_t getDPIHint();
 
-  /* Soft keyboard via NativeActivity (no JNI). Note: with NativeActivity the
-   * typed text is not delivered back; hardware keys still work as key events. */
+  /* System IME, using the existing Java InputView/JNI composing and commit bridge. */
   GHOST_TSuccess popupOnScreenKeyboard(GHOST_IWindow *window) override;
   GHOST_TSuccess hideOnScreenKeyboard(GHOST_IWindow *window) override;
 
@@ -171,7 +170,12 @@ class GHOST_SystemAndroid : public GHOST_System {
   void dispatchTextInput(const char *utf8_string);
   void dispatchJavaKeyEvent(int32_t keycode, int32_t action, int32_t meta_state);
   std::mutex java_input_mutex_;
-  std::vector<std::string> java_text_;
-  std::vector<JavaKeyEvent> java_keys_;
+  struct JavaInput {
+    std::string text;
+    JavaKeyEvent key;
+    bool is_text;
+  };
+  /* One FIFO: a composing replacement must delete before inserting its new tail. */
+  std::vector<JavaInput> java_input_;
   std::vector<std::string> java_open_files_;
 };

@@ -375,6 +375,7 @@ enum wmEventType : int16_t {
   EVT_BUT_CANCEL = 0x5024, /* 20516 */
 
   /* Could become gizmo callback. */
+  EVT_ANDROID_TEXT = 0x5026, /* Internal Android IME bulk commit. */
   EVT_GIZMO_UPDATE = 0x5025, /* 20517 */
 
   /* XR events: 0x503x. */

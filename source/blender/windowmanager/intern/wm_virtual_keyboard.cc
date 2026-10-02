@@ -70,6 +70,10 @@
 #include "wm_window.hh"
 #include "wm_window_private.hh"
 
+#ifdef __ANDROID__
+extern "C" void GHOST_android_toggle_keyboard();
+#endif
+
 namespace blender {
 
 /* -------------------------------------------------------------------- */
@@ -1383,6 +1387,11 @@ bool WM_virtual_keyboard_rect_get(const wmWindow *win, rcti *r_rect)
 
 void WM_virtual_keyboard_toggle(wmWindowManager *wm, wmWindow *win)
 {
+#ifdef __ANDROID__
+  if (g_vk.open) { vk_close(wm, win); }
+  GHOST_android_toggle_keyboard();
+  return;
+#endif
   if (g_vk.open) {
     vk_close(wm, win);
   }
@@ -1501,6 +1510,47 @@ bool wm_virtual_keyboard_ghost_event(wmWindowManager *wm,
                                      const int type,
                                      const void *customdata)
 {
+#ifdef __ANDROID__
+  /* The fixed LEFT statusbar region contains only KEYBOARD. Own this tap before
+   * UI text handlers commit a field or switch the active editor to STATUSBAR. */
+  static int cursor[2] = {0, 0};
+  static bool pressed = false;
+  const auto on_keyboard = [&]() {
+    for (const ScrArea &area : win->global_areas.areabase) {
+      if (area.spacetype != SPACE_STATUSBAR) { continue; }
+      for (const ARegion &region : area.regionbase) {
+        if (RGN_ALIGN_ENUM_FROM_MASK(region.alignment) == RGN_ALIGN_LEFT &&
+            region.runtime->visible && BLI_rcti_isect_pt_v(&region.winrct, cursor))
+        {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  if (type == GHOST_kEventWindowDeactivate) { pressed = false; }
+  if (type == GHOST_kEventCursorMove) {
+    const auto *data = static_cast<const GHOST_TEventCursorData *>(customdata);
+    cursor[0] = data->x;
+    cursor[1] = data->y;
+    wm_cursor_position_from_ghost_screen_coords(win, &cursor[0], &cursor[1]);
+    if (pressed || on_keyboard()) { return true; }
+  }
+  if (ELEM(type, GHOST_kEventButtonDown, GHOST_kEventButtonUp)) {
+    const auto *data = static_cast<const GHOST_TEventButtonData *>(customdata);
+    if (data->button == GHOST_kButtonMaskLeft) {
+      if (type == GHOST_kEventButtonDown && on_keyboard()) {
+        pressed = true;
+        return true;
+      }
+      if (type == GHOST_kEventButtonUp && pressed) {
+        pressed = false;
+        if (on_keyboard()) { WM_virtual_keyboard_toggle(wm, win); }
+        return true;
+      }
+    }
+  }
+#endif
   VirtualKeyboard &vk = g_vk;
   if (!vk.open || vk.win != win) {
     return false;
@@ -1608,9 +1658,13 @@ void WM_OT_virtual_keyboard_toggle(wmOperatorType *ot)
 {
   ot->name = "Toggle Virtual Keyboard";
   ot->idname = "WM_OT_virtual_keyboard_toggle";
+#ifdef __ANDROID__
+  ot->description = "Show or hide the selected Android system keyboard";
+#else
   ot->description =
       "Show or hide the on-screen keyboard. While it is open it replaces the platform keyboard "
       "and can send shortcuts and modifiers as well as text";
+#endif
 
   ot->exec = wm_virtual_keyboard_toggle_exec;
   ot->poll = WM_operator_winactive;

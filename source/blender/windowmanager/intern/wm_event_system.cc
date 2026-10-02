@@ -4362,6 +4362,51 @@ void wm_event_do_handlers(bContext *C)
 
       wm_region_mouse_co(C, event);
 
+#ifdef __ANDROID__
+      if (event->type == EVT_ANDROID_TEXT) {
+        const char *text = static_cast<const char *>(event->customdata);
+        ScrArea *area = CTX_wm_area(C);
+        ARegion *region = CTX_wm_region(C);
+        /* TEXT_OT_insert already supports literal bulk text and one undo step.
+         * Sending pasted newlines as Enter would auto-indent/execute instead. */
+        if (area && area->spacetype == SPACE_TEXT && region &&
+            region->regiontype == RGN_TYPE_WINDOW &&
+            !ui::context_active_but_get(C) && screen->regionbase.is_empty())
+        {
+          PointerRNA props;
+          WM_operator_properties_create(&props, "TEXT_OT_insert");
+          RNA_string_set(&props, "text", text);
+          WM_operator_name_call(C, "TEXT_OT_insert", wm::OpCallContext::ExecDefault, &props, nullptr);
+          WM_operator_properties_free(&props);
+        }
+        else {
+          /* Other editors/fields keep the existing ordinary text/key routing.
+           * Insert before this event, rather than behind already queued typing. */
+          for (const char *p = text; *p;) {
+            const int len = BLI_str_utf8_size_safe(p);
+            GHOST_TEventKeyData keydata = {};
+            keydata.key = (*p == '\n' || *p == '\r') ? GHOST_kKeyEnter : GHOST_kKeyA;
+            memcpy(keydata.utf8_buf, p, size_t(len));
+            for (int type : {GHOST_kEventKeyDown, GHOST_kEventKeyUp}) {
+              wmEvent *last = static_cast<wmEvent *>(win.runtime->event_queue.last);
+              wm_event_add_ghostevent(wm, &win, type, &keydata, GHOST_ISystem::getSystem()->getMilliSeconds());
+              wmEvent *added = last ? last->next : static_cast<wmEvent *>(win.runtime->event_queue.first);
+              while (added) {
+                wmEvent *next = added->next;
+                BLI_remlink(&win.runtime->event_queue, added);
+                BLI_insertlinkbefore(&win.runtime->event_queue, event, added);
+                added = next;
+              }
+            }
+            p += len;
+          }
+        }
+        BLI_remlink(&win.runtime->event_queue, event);
+        wm_event_free(event);
+        continue;
+      }
+#endif
+
       /* First we do priority handlers, modal + some limited key-maps. */
       action |= wm_handlers_do(C, event, &win.runtime->modalhandlers);
 
@@ -6125,6 +6170,15 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
 #endif
 
   switch (type) {
+#ifdef __ANDROID__
+    case GHOST_kEventAndroidText:
+      event.type = EVT_ANDROID_TEXT;
+      event.val = KM_NOTHING;
+      event.customdata = BLI_strdup(static_cast<const char *>(customdata));
+      event.customdata_free = true;
+      wm_event_add_intern(win, &event);
+      break;
+#endif
     /* Mouse move, also to inactive window (X11 does this). */
     case GHOST_kEventCursorMove: {
       const GHOST_TEventCursorData *cd = static_cast<const GHOST_TEventCursorData *>(customdata);

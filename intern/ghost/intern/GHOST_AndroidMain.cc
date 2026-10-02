@@ -214,9 +214,22 @@ extern "C" JNIEXPORT void JNICALL Java_org_blender_blender_BlenderActivity_nativ
   if (!system || !text) {
     return;
   }
-  const char *utf = env->GetStringUTFChars(text, nullptr);
-  system->handleTextInput(utf);
-  env->ReleaseStringUTFChars(text, utf);
+  /* JNI modified UTF-8 encodes supplementary characters incorrectly for Blender.
+   * Ask String for standard UTF-8 bytes instead. */
+  jclass cls = env->GetObjectClass(text);
+  jmethodID method = env->GetMethodID(cls, "getBytes", "(Ljava/lang/String;)[B");
+  jstring encoding = env->NewStringUTF("UTF-8");
+  auto bytes = static_cast<jbyteArray>(env->CallObjectMethod(text, method, encoding));
+  if (!env->ExceptionCheck() && bytes) {
+    const jsize length = env->GetArrayLength(bytes);
+    std::string value(size_t(length), '\0');
+    env->GetByteArrayRegion(bytes, 0, length, reinterpret_cast<jbyte *>(value.data()));
+    system->handleTextInput(value.c_str());
+  }
+  if (env->ExceptionCheck()) { env->ExceptionClear(); }
+  if (bytes) { env->DeleteLocalRef(bytes); }
+  env->DeleteLocalRef(encoding);
+  env->DeleteLocalRef(cls);
 }
 
 extern "C" JNIEXPORT void JNICALL Java_org_blender_blender_BlenderActivity_nativeOnKey(

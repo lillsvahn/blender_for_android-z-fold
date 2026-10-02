@@ -15,6 +15,9 @@
 
 #include <Python.h>
 #include <optional>
+#include <cmath>
+#include <string>
+#include <vector>
 
 #include "BLI_string.hh"
 #include "BLI_string_utils.hh"
@@ -676,7 +679,65 @@ static PyObject *bpy_wm_capabilities(PyObject *self)
 #  endif
 #endif
 
+#ifdef __ANDROID__
+extern "C" void GHOST_android_mobile_layout(const float *, int);
+extern "C" int GHOST_android_mobile_state(float *);
+extern "C" std::string GHOST_android_copilot(const char *, const char *);
+
+static PyObject *bpy_android_mobile_layout(PyObject *, PyObject *arg)
+{
+  PyObject *seq = PySequence_Fast(arg, "Expected layout rows");
+  if (!seq) { return nullptr; }
+  const Py_ssize_t count = PySequence_Fast_GET_SIZE(seq);
+  if (count > 32) { Py_DECREF(seq); return PyErr_Format(PyExc_ValueError, "At most 32 viewports"); }
+  std::vector<float> rows;
+  for (Py_ssize_t i = 0; i < count; i++) {
+    PyObject *row = PySequence_Fast(PySequence_Fast_GET_ITEM(seq, i), "Expected 12 values");
+    if (!row) { Py_DECREF(seq); return nullptr; }
+    if (PySequence_Fast_GET_SIZE(row) != 12) {
+      Py_DECREF(row); Py_DECREF(seq); return PyErr_Format(PyExc_ValueError, "Expected 12 values");
+    }
+    for (int j = 0; j < 12; j++) {
+      const double value = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(row, j));
+      if (PyErr_Occurred() || !std::isfinite(value) || (j == 9 && value <= 0)) {
+        Py_DECREF(row); Py_DECREF(seq);
+        if (!PyErr_Occurred()) { PyErr_SetString(PyExc_ValueError, "Invalid layout geometry"); }
+        return nullptr;
+      }
+      rows.push_back(float(value));
+    }
+    Py_DECREF(row);
+  }
+  Py_DECREF(seq);
+  GHOST_android_mobile_layout(rows.data(), int(count));
+  Py_RETURN_NONE;
+}
+static PyObject *bpy_android_mobile_state(PyObject *, PyObject *)
+{
+  float rows[32 * 6];
+  const int count = GHOST_android_mobile_state(rows);
+  PyObject *result = PyList_New(count);
+  for (int i = 0; i < count; i++) {
+    float *r = rows + i * 6;
+    PyList_SET_ITEM(result, i, Py_BuildValue("(iffffi)", int(r[0]), r[1], r[2], r[3], r[4], int(r[5])));
+  }
+  return result;
+}
+static PyObject *bpy_android_copilot(PyObject *, PyObject *args)
+{
+  const char *action, *payload;
+  if (!PyArg_ParseTuple(args, "ss", &action, &payload)) { return nullptr; }
+  std::string result = GHOST_android_copilot(action, payload);
+  return PyUnicode_DecodeUTF8(result.data(), Py_ssize_t(result.size()), "strict");
+}
+#endif
+
 static PyMethodDef bpy_methods[] = {
+#ifdef __ANDROID__
+    {"android_mobile_layout", bpy_android_mobile_layout, METH_O, nullptr},
+    {"android_mobile_state", bpy_android_mobile_state, METH_NOARGS, nullptr},
+    {"android_copilot", bpy_android_copilot, METH_VARARGS, nullptr},
+#endif
     {"script_paths",
      reinterpret_cast<PyCFunction>(bpy_script_paths),
      METH_NOARGS,
