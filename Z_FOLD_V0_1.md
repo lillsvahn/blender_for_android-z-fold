@@ -32,6 +32,8 @@
 | `build_files/android/apk/{package.sh,sign.sh}`, manifest | Kompilera båda Java-klasserna, färsk payload, stabil signering/version |
 | `build_files/android/zfold_preflight.py`, `tests/*` | Billiga kontroller, resursgate och kontroll av färdig APK |
 | `.github/workflows/zfold-android.yml`, `.github/actionlint.yaml` | Endast manuell Full ARM64-build på provisionerad runner; lint för egen runner-label |
+| `.devcontainer/{devcontainer.json,Dockerfile}`, `build_files/android/codespace_{env,setup,build}.sh`, `codespace_support.py`, `tests/test_codespaces.py` | Manuell Codespaces-miljö, resursgate, SDK/NDK, persistent signering, resume och APK-download |
+| `lib/linux_x64` gitlink, `.gitignore`, `build_files/android/CODESPACES.md` | Återställd host-library-pin, devcontainer tracked, gitignored output och Codespaces-instruktioner |
 | `ANDROID_AI_GUIDE.md`, detta dokument | Hänvisning och projektspecifik överlämning |
 
 `space_statusbar.py`, `interface_handlers.cc` och vanliga keymaps är oförändrade:
@@ -246,7 +248,7 @@ export BUILD_BASE=/path/to/dedicated/zfold-build
 export CMAKE_BUILD_PARALLEL_LEVEL=2
 python3 build_files/android/zfold_preflight.py
 # Source-LFS + lib/linux_x64 enligt ANDROID_AI_GUIDE.md/BUILDING.md.
-bash build_files/android/deps/build.sh
+bash build_files/android/deps/build.sh all
 python3 build_files/android/build.py full --reconfigure --repackage --no-archive
 python3 build_files/android/tests/check_apk.py \
   "$BUILD_BASE/android_apk_stage_full/blender-full.apk"
@@ -257,6 +259,61 @@ alla Java-klasser; host `__pycache__` följer inte med. Runtime-revisionen är
 befintlig SHA256-hash och invaliderar device-extraction när payload ändras.
 `check_apk.py` jämför de nya skripten byte för byte, revision/CRC, DEX-brygga och
 ARM64/native-symboler. Den kontrollen har inte körts mot någon APK ännu.
+
+## GitHub Codespaces Build
+
+Den färdiga funktionella revisionen **`0cff89a82f247faabc546f3a44a9b6b06a57d35e`**
+behålls byte för byte. Codespaces-tillägget ändrar endast byggmiljön. Följ
+**[build_files/android/CODESPACES.md](build_files/android/CODESPACES.md)** för
+GitHub UI, signing-backup/Base64/secrets, resume, disk och download.
+
+Skapa Codespace från **zfold-v0.1.0**, inte main. Välj minsta tillgängliga maskin
+med **128 GB workspace**, minst 4 CPU och 16 GB RAM. `hostRequirements` anger
+minimum 4/16gb/100gb utan hårdkodad SKU; kontot måste erbjuda en tillräcklig maskin.
+Setup stoppar före stora downloads på för liten disk/RAM. Det kräver 85 GiB
+före färsk SDK-setup och 70 GiB för färsk byggfas efter SDK/source. Vid resume
+räknas eget befintligt byggmaterial in; minst 10 GiB verkligt ledigt krävs.
+
+`postCreateCommand` kör bara idempotent toolchain-setup: Ubuntu 24.04, Clang 18,
+CMake ≥3.26, JDK 17, SDK 35/build-tools 35.0.1 och NDK 28.2.13676358. Full/
+dependencies startar **aldrig automatiskt**. Persistent `BUILD_BASE` är
+`/workspaces/.zfold-build` på samma stora filesystem som checkout, även för TMPDIR.
+
+Skapa de fyra **Codespaces secrets** `ZFOLD_KEYSTORE_BASE64`,
+`ZFOLD_KEYSTORE_PASSWORD`, `ZFOLD_KEY_ALIAS`, `ZFOLD_KEY_PASSWORD` med repo-access.
+Actions secrets exponeras inte automatiskt här. Om secrets läggs till senare,
+stoppa/återöppna Codespacen. Byggkommandot kräver och validerar persistent key,
+återställer den med 0600/0700 i privat temp-folder och städar efter körningen.
+Ingen ny signing identity skapas av scriptet.
+
+```bash
+# Setup sker normalt automatiskt. Detta är hela den manuella Full-builden:
+bash build_files/android/codespace_build.sh
+# Resurs-/toolchain-/signeringskontroll utan downloads eller APK-build:
+bash build_files/android/codespace_build.sh --check
+```
+
+Två parallella jobb är default. Varje färdig dependency får ett validerat
+completion-manifest; avbrott återupptas med samma kommando utan att radera
+färdigt material. Full använder `--reconfigure --repackage --no-archive`.
+APK/runtime/signature och matchande signing-certifikat kontrolleras före
+**BUILD SUCCESS** med path, MiB, SHA256, version och application ID.
+Explorer-output är `out/blender-zfold-v0.1.0-arm64.apk`, normalt hard link till
+`$BUILD_BASE/android_apk_stage_full/blender-full.apk`. Bara en kopia används om
+hard links saknas; `out/` är gitignored. Hämta APK/nyckel-backup och radera
+Codespacen efteråt för att sluta behålla dess storage.
+
+Spegeln saknade en tracked `lib/linux_x64`-gitlink i Alpha 2/0cff trots befintlig
+`.gitmodules`. Enda befintliga build-input som korrigeras är att återställa
+originalportens pin **`ecbd06cf6d2a4aa6b00a61ffb479fc81b17aba08`**; dess
+dependency-versionsfil är byteidentisk med basen. Proveniens finns i Codespaces-
+dokumentet. Ingen upstream main eller nyare host-lib-version används.
+Befintliga build-recept och Actions-workflow är oförändrade.
+
+Officiell JSON-schema-validering, shell/Python syntax, diff review och billiga
+Codespaces host-tester har körts. Inga Codespaces/Actions-jobs, Full-builds eller
+SDK-installationer startades under utvecklingen. Full Codespaces-provisionering
+och första APK-bygget återstår som integrationsprov på en tillräcklig maskin.
 
 ## Stabil signering och GitHub Secrets
 

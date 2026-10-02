@@ -14,6 +14,9 @@
 !.clang-tidy
 !.editorconfig
 !.well-known/
+!.devcontainer/
+!.devcontainer/devcontainer.json
+!.devcontainer/Dockerfile
 
 # Deliberately still ignored by the rule above: .claude/ (local agent settings),
 # .vscode/, .idea/, .gradle/, .venv/ and the various tool caches.

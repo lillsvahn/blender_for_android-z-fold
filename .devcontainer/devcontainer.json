@@ -1,0 +1,28 @@
+{
+  "name": "Z Fold Blender Full ARM64 build",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "remoteUser": "vscode",
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb",
+    "storage": "100gb"
+  },
+  "containerEnv": {
+    "GIT_LFS_SKIP_SMUDGE": "1"
+  },
+  "remoteEnv": {
+    "BUILD_BASE": "/workspaces/.zfold-build",
+    "ANDROID_HOME": "/workspaces/.zfold-build/android-sdk",
+    "ANDROID_NDK_ROOT": "/workspaces/.zfold-build/android-sdk/ndk/28.2.13676358",
+    "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk-amd64",
+    "ANDROID_HOST_CC": "/usr/bin/clang-18",
+    "ANDROID_HOST_CXX": "/usr/bin/clang++-18",
+    "CMAKE_BUILD_PARALLEL_LEVEL": "2",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "postCreateCommand": ["bash", "build_files/android/codespace_setup.sh"],
+  "waitFor": "postCreateCommand"
+}
