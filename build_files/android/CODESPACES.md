@@ -65,17 +65,18 @@ base64 -w 0 /private/path/zfold-signing.jks > /private/path/zfold-signing.base64
 
 Det går att skapa den **en gång i Codespacens terminal**, även om du bara använder
 telefonen. Vänta först på setup så att JDK 17/keytool finns. Följande privata
-mapp ligger utanför Git-checkout; lösenord frågas interaktivt:
+mapp ligger utanför Git-checkout, under den byggmapp som setup gjort skrivbar;
+lösenord frågas interaktivt:
 
 ```bash
 umask 077
-mkdir -p /workspaces/.zfold-signing
-chmod 700 /workspaces/.zfold-signing
+mkdir -p /workspaces/.zfold-build/signing-backup
+chmod 700 /workspaces/.zfold-build/signing-backup
 keytool -genkeypair -storetype PKCS12 \
-  -keystore /workspaces/.zfold-signing/zfold-signing.jks -alias zfold \
+  -keystore /workspaces/.zfold-build/signing-backup/zfold-signing.jks -alias zfold \
   -keyalg RSA -keysize 3072 -validity 10000 -dname "CN=Z Fold APK"
-base64 -w 0 /workspaces/.zfold-signing/zfold-signing.jks \
-  > /workspaces/.zfold-signing/zfold-signing.base64
+base64 -w 0 /workspaces/.zfold-build/signing-backup/zfold-signing.jks \
+  > /workspaces/.zfold-build/signing-backup/zfold-signing.base64
 ```
 
 Öppna Base64-filen via VS Code **File → Open File** med dess absoluta sökväg,
@@ -84,7 +85,7 @@ secretsen ska ha det valda PKCS12-lösenordet; alias är `zfold`. Lägg inte
 Base64-innehåll/lösenord i byggkommandot, terminal-loggar, Git eller AI-chatten.
 
 Säkerhetskopiera **keystore, alias och lösenord** innan Codespacen tas bort.
-VS Code **File → Add Folder to Workspace** kan visa `/workspaces/.zfold-signing`
+VS Code **File → Add Folder to Workspace** kan visa `/workspaces/.zfold-build/signing-backup`
 i Explorer; högerklick/kontextmeny på JKS-filen → **Download**. Spara den privat
 på telefonen eller i din vanliga säkra backup. Den privata mappen är aldrig en
 Git-delivery. Återanvänd denna backup för framtida egna builds.
