@@ -85,6 +85,12 @@ def tick(settings):
     _regions = regions
     _axes = {}
     if previous_regions != regions:
+        # Clear already drawn controls when disabling/changing an editor too.
+        for _, area, _, _ in previous_regions.values():
+            try:
+                area.tag_redraw()
+            except ReferenceError:
+                pass  # A removed screen/area no longer has a drawable surface.
         for _, area, _, _ in regions.values():
             area.tag_redraw()
     for rid, mx, my, lx, ly, frame in _bpy.android_mobile_state():

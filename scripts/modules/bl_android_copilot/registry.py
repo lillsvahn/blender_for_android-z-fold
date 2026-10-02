@@ -101,6 +101,14 @@ def _viewport(ctx):
 
 def inspect_scene(ctx, limit=40, offset=0):
     objects = list(ctx.scene.objects)
+    collections, queue, seen = [], [ctx.scene.collection], set()
+    while queue and len(collections) < 80:
+        collection = queue.pop(0)
+        if collection.as_pointer() in seen:
+            continue
+        seen.add(collection.as_pointer())
+        collections.append({'name': collection.name, 'objects': len(collection.objects)})
+        queue.extend(collection.children)
     result = {
         'scene': ctx.scene.name, 'mode': ctx.mode,
         'active_object': ctx.active_object.name if ctx.active_object else None,
@@ -109,7 +117,7 @@ def inspect_scene(ctx, limit=40, offset=0):
                      'dimensions': _vec(o.dimensions)} for o in objects[offset:offset + limit]],
         'object_count': len(objects), 'offset': offset,
         'truncated': offset + limit < len(objects),
-        'collections': [{'name': c.name, 'objects': len(c.objects)} for c in bpy.data.collections][:80],
+        'collections': collections,
         'units': {'system': ctx.scene.unit_settings.system, 'scale_length': ctx.scene.unit_settings.scale_length},
     }
     try:
@@ -233,6 +241,8 @@ class _Output(io.StringIO):
 def run_bpy(ctx, source):
     # Compile before making a checkpoint; do not pretend bpy is sandboxed.
     code = compile(source, '<AI Copilot>', 'exec')
+    if not bpy.context.preferences.edit.use_global_undo:
+        raise RuntimeError('Enable Blender Global Undo before running Copilot Python')
     if not bpy.ops.ed.undo_push.poll():
         raise RuntimeError('Blender undo checkpoint is unavailable in this context')
     bpy.ops.ed.undo_push(message='Before AI Copilot Python')
@@ -267,21 +277,36 @@ def make_registry():
         return {'type': 'object', 'properties': {'ok': {'type': 'boolean'}, 'error': {'type': 'string'},
                 'traceback': {'type': 'string'}, **props}, 'required': ['ok']}
     string = {'type': 'string'}
+    nullable_string = {'type': ['string', 'null']}
+    vector = {'type': 'array', 'items': {'type': 'number'}}
+    names = {'type': 'array', 'items': string}
     counts = {k: {'type': 'integer'} for k in ('vertices', 'edges', 'faces', 'triangles')}
     specifications = [
         ('inspect_scene', 'Inspect compact scene facts. Use offset/limit for more objects; do not guess names.',
          schema({'limit': {'type': 'integer', 'minimum': 1, 'maximum': 100},
                  'offset': {'type': 'integer', 'minimum': 0, 'maximum': 1000000}}),
-         output({'scene': string, 'mode': string, 'objects': {'type': 'array'}, 'units': {'type': 'object'},
-                 'viewport': {'type': ['object', 'null']}, 'object_count': {'type': 'integer'}}), inspect_scene, False),
+         output({'scene': string, 'mode': string, 'active_object': nullable_string,
+                 'selected_objects': names, 'objects': {'type': 'array', 'items': {'type': 'object'}},
+                 'units': {'type': 'object'}, 'collections': {'type': 'array', 'items': {'type': 'object'}},
+                 'viewport': {'type': ['object', 'null']}, 'object_count': {'type': 'integer'},
+                 'offset': {'type': 'integer'}, 'truncated': {'type': 'boolean'}}), inspect_scene, False),
         ('inspect_object', 'Inspect a named current-scene object, transforms, bounds, hierarchy, modifiers and materials.',
-         schema({'name': string}, ('name',)), output({'name': string, 'type': string, 'mesh': {'type': 'object'}}), inspect_object, False),
+         schema({'name': string}, ('name',)),
+         output({'name': string, 'type': string, 'location': vector, 'rotation_euler': vector,
+                 'rotation_quaternion': vector, 'rotation_mode': string, 'scale': vector, 'dimensions': vector,
+                 'matrix_world': {'type': 'array', 'items': vector},
+                 'bounding_box_world': {'type': 'array', 'items': vector}, 'parent': nullable_string,
+                 'children': names, 'modifiers': {'type': 'array', 'items': {'type': 'object'}},
+                 'materials': {'type': 'array', 'items': nullable_string}, 'mesh': {'type': 'object'}}), inspect_object, False),
         ('capture_viewport', 'Capture current 3D Viewport shading/view as a small PNG visual input.',
          schema({'max_size': {'type': 'integer', 'minimum': 64, 'maximum': 1024}}),
-         output({'mime_type': string, 'data': string, 'width': {'type': 'integer'}, 'height': {'type': 'integer'}}), capture_viewport, False),
+         output({'mime_type': string, 'data': string, 'width': {'type': 'integer'}, 'height': {'type': 'integer'},
+                 'shading': string}), capture_viewport, False),
         ('mesh_stats', 'Count mesh vertices/edges/faces/triangles, normally evaluated after visible modifiers and instancing.',
          schema({'scope': {'type': 'string', 'enum': ['object', 'selected', 'scene', 'collection']},
-                 'name': string, 'collection': string, 'evaluated': {'type': 'boolean'}}), output(counts), mesh_stats, False),
+                 'name': string, 'collection': string, 'evaluated': {'type': 'boolean'}}),
+         output({**counts, 'mesh_instances': {'type': 'integer'}, 'evaluated': {'type': 'boolean'},
+                 'evaluation': string}), mesh_stats, False),
         ('run_bpy', 'Execute raw Blender Python on the main thread with undo checkpoints, stdout and exception details.',
          schema({'source': {'type': 'string', 'maxLength': 200000}}, ('source',)),
          output({'success': {'type': 'boolean'}, 'stdout': string}), run_bpy, True),

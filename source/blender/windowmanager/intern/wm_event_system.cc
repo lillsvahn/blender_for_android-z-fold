@@ -6173,6 +6173,7 @@ void wm_event_add_ghostevent(wmWindowManager *wm,
     case GHOST_kEventAndroidText:
       event.type = EVT_ANDROID_TEXT;
       event.val = KM_NOTHING;
+      event.custom = 0;
       event.customdata = BLI_strdup(static_cast<const char *>(customdata));
       event.customdata_free = true;
       wm_event_add_intern(win, &event);

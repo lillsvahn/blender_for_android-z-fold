@@ -30,6 +30,13 @@ class GHOST_AndroidMobile {
     return std::hypot(x - cx, y - cy) <= r;
   }
  public:
+  void begin_sequence()
+  {
+    /* ACTION_DOWN starts a new Android sequence. The previous one may have
+     * disappeared with the input queue on pause, without delivering an UP. */
+    owners_.clear();
+    states_.clear();
+  }
   void cancel()
   {
     states_.clear();

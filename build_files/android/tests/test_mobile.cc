@@ -49,5 +49,12 @@ int main()
   nav.cancel();
   nav.up(60, 152, 550);
   assert(nav.state(state) == 0);
+  assert(nav.down(70, 150, 550));
+  nav.cancel(); /* Lost input queue: no UP arrives. */
+  nav.begin_sequence();
+  assert(nav.down(70, 150, 550)); /* Reused pointer ID may work again. */
+  nav.move(70, 250, 550);
+  nav.state(state);
+  assert(state[1] == 1);
   std::cout << "Android mobile ownership tests passed\n";
 }

@@ -42,10 +42,17 @@ jobs:
           printf '%s' "$ZFOLD_KEYSTORE_BASE64" | base64 --decode > "$BLENDER_ANDROID_KEYSTORE"
       - name: Check provisioned runner before any expensive work
         run: python3 build_files/android/zfold_preflight.py
-      - name: Verify signing alias and keystore password
+      - name: Verify signing alias and both passwords
+        shell: bash
         run: |
+          set -euo pipefail
           keytool -list -keystore "$BLENDER_ANDROID_KEYSTORE" \
             -storepass:env BLENDER_ANDROID_KEYSTORE_PASSWORD -alias "$BLENDER_ANDROID_KEY_ALIAS" > /dev/null
+          # Access the private key before spending hours on dependencies.
+          keytool -certreq -keystore "$BLENDER_ANDROID_KEYSTORE" \
+            -storepass:env BLENDER_ANDROID_KEYSTORE_PASSWORD -keypass:env BLENDER_ANDROID_KEY_PASSWORD \
+            -alias "$BLENDER_ANDROID_KEY_ALIAS" -file "$RUNNER_TEMP/zfold-signing-check.csr" > /dev/null
+          rm -f "$RUNNER_TEMP/zfold-signing-check.csr"
       - name: Cheap checks before dependencies
         run: python3 build_files/android/tests/run_checks.py
       - name: Fetch public LFS assets and pinned Linux host libraries
@@ -62,6 +69,10 @@ jobs:
           df -h "$BUILD_BASE"
       - name: Build ARM64 dependencies once
         run: bash build_files/android/deps/build.sh
+      - name: Discard dependency download archives after installation
+        # build.py/package.sh use the installed prefix, not fetch() archives.
+        # Retain work/host trees: generated files may still refer to them.
+        run: rm -rf -- "$BUILD_BASE/android_deps_build/downloads"
       - name: Full configure, compile and fresh runtime package
         run: python3 build_files/android/build.py full --reconfigure --repackage --no-archive
       - name: Verify signature and packaged Z Fold runtime
@@ -81,4 +92,4 @@ jobs:
       - name: Remove temporary signing material
         if: always()
         shell: bash
-        run: rm -f "$BLENDER_ANDROID_KEYSTORE"
+        run: rm -f "$BLENDER_ANDROID_KEYSTORE" "$RUNNER_TEMP/zfold-signing-check.csr"

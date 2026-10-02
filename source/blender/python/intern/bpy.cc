@@ -22,6 +22,9 @@
 #include "BLI_string.hh"
 #include "BLI_string_utils.hh"
 #include "BLI_utildefines.hh"
+#ifdef __ANDROID__
+#  include "BLI_threads.hh"
+#endif
 
 #include "BKE_appdir.hh"
 #include "BKE_blender_version.h"
@@ -690,6 +693,9 @@ extern "C" int GHOST_android_mobile_state(float *);
 
 static PyObject *bpy_android_mobile_layout(PyObject *, PyObject *arg)
 {
+  if (!BLI_thread_is_main()) {
+    return PyErr_Format(PyExc_RuntimeError, "Android controls require the Blender main thread");
+  }
   PyObject *seq = PySequence_Fast(arg, "Expected layout rows");
   if (!seq) { return nullptr; }
   const Py_ssize_t count = PySequence_Fast_GET_SIZE(seq);
@@ -703,7 +709,10 @@ static PyObject *bpy_android_mobile_layout(PyObject *, PyObject *arg)
     }
     for (int j = 0; j < 12; j++) {
       const double value = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(row, j));
-      if (PyErr_Occurred() || !std::isfinite(value) || (j == 9 && value <= 0)) {
+      if (PyErr_Occurred() || !std::isfinite(value) || std::abs(value) > 16777216 ||
+          (j == 0 && (value < 1 || value > 32 || value != std::floor(value))) ||
+          (j == 9 && value <= 0))
+      {
         Py_DECREF(row); Py_DECREF(seq);
         if (!PyErr_Occurred()) { PyErr_SetString(PyExc_ValueError, "Invalid layout geometry"); }
         return nullptr;
@@ -718,17 +727,26 @@ static PyObject *bpy_android_mobile_layout(PyObject *, PyObject *arg)
 }
 static PyObject *bpy_android_mobile_state(PyObject *, PyObject *)
 {
+  if (!BLI_thread_is_main()) {
+    return PyErr_Format(PyExc_RuntimeError, "Android controls require the Blender main thread");
+  }
   float rows[32 * 6];
   const int count = GHOST_android_mobile_state(rows);
   PyObject *result = PyList_New(count);
+  if (!result) { return nullptr; }
   for (int i = 0; i < count; i++) {
     float *r = rows + i * 6;
-    PyList_SET_ITEM(result, i, Py_BuildValue("(iffffi)", int(r[0]), r[1], r[2], r[3], r[4], int(r[5])));
+    PyObject *row = Py_BuildValue("(iffffi)", int(r[0]), r[1], r[2], r[3], r[4], int(r[5]));
+    if (!row) { Py_DECREF(result); return nullptr; }
+    PyList_SET_ITEM(result, i, row);
   }
   return result;
 }
 static PyObject *bpy_android_copilot(PyObject *, PyObject *args)
 {
+  if (!BLI_thread_is_main()) {
+    return PyErr_Format(PyExc_RuntimeError, "Android Copilot requires the Blender main thread");
+  }
   const char *action, *payload;
   if (!PyArg_ParseTuple(args, "ss", &action, &payload)) { return nullptr; }
   std::string result = GHOST_android_copilot(action, payload);

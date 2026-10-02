@@ -20,7 +20,8 @@ def run(args):
 
 for file in [*ROOT.glob('scripts/modules/bl_android_copilot/*.py'),
              ROOT / 'scripts/modules/bl_android_navigation.py', ROOT / 'scripts/startup/bl_android_zfold.py',
-             *TESTS.glob('*.py'), ROOT / 'build_files/android/zfold_preflight.py']:
+             *TESTS.glob('*.py'), ROOT / 'build_files/android/zfold_preflight.py',
+             ROOT / 'build_files/android/build.py']:
     ast.parse(file.read_text(), filename=str(file))
 run(['git', 'diff', '--check'])
 run([sys.executable, TESTS / 'test_core.py'])

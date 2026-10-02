@@ -192,6 +192,8 @@ class CopilotJob:
             self._refresh()
         # Results of a now-undone action are stale; the next request gets facts.
         self.previous, self.responses = None, []
+        self.memory.append({'user_action': 'Undo', 'result': result})
+        self.memory = self.memory[-4:]
         self.log('User Undo: ' + json.dumps(result))
         self.status = 'Undo complete' if result.get('ok') else result.get('error', 'Undo failed')
 

@@ -1,5 +1,10 @@
 # Blender for Android: Build and Change Guide
 
+Z Fold v0.1.0 development branches from exactly
+`76dc70df95ae32dcd15f3f86abfd82f4c5691140`. See [Z_FOLD_V0_1.md](Z_FOLD_V0_1.md)
+for the system-IME, mobile sticks, built-in Gemini registry, cheap checks,
+manual-only Full ARM64 workflow, runner budget and stable signing requirements.
+
 A reference for a person or an AI agent picking this fork up cold. It covers what
 the port is, how to build it end to end, how to drive a device over ADB, and
 where every change lives in the tree.

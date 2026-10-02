@@ -23,6 +23,7 @@ from bl_android_copilot.runtime import CopilotJob
 class Tests(unittest.TestCase):
     def setUp(self):
         self.registry = make_registry()
+        bpy.context.preferences = types.SimpleNamespace(edit=types.SimpleNamespace(use_global_undo=True))
         bpy.ops = types.SimpleNamespace(ed=types.SimpleNamespace(undo_push=Mock(), undo=Mock()))
         bpy.ops.ed.undo_push.poll.return_value = True
 
@@ -59,6 +60,13 @@ class Tests(unittest.TestCase):
         result = self.registry.execute('run_bpy', {'source': "print('x'*100000)"})
         self.assertLessEqual(len(result['stdout']), 12000)
 
+    def test_disabled_undo_refuses_python(self):
+        bpy.context.preferences.edit.use_global_undo = False
+        result = self.registry.execute('run_bpy', {'source': "print('must not run')"})
+        self.assertFalse(result['ok'])
+        self.assertIn('Global Undo', result['error'])
+        bpy.ops.ed.undo_push.assert_not_called()
+
     def test_wire_images_signatures(self):
         transport = Mock(return_value={'ok': True})
         adapter = GeminiAdapter(self.registry, transport)
@@ -74,6 +82,9 @@ class Tests(unittest.TestCase):
         self.assertNotIn('api_key', json.dumps(request))
         undo = next(t for t in request['body']['tools'][0]['functionDeclarations'] if t['name'] == 'undo')
         self.assertNotIn('parameters', undo)
+        inspect = next(t for t in request['body']['tools'][0]['functionDeclarations'] if t['name'] == 'inspect_object')
+        self.assertEqual(inspect['parameters']['type'], 'OBJECT')
+        self.assertEqual(inspect['parameters']['properties']['name']['type'], 'STRING')
 
     def test_incomplete_never_executes(self):
         with self.assertRaises(ValueError):

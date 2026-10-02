@@ -7,6 +7,8 @@ import json
 def _schema(schema):
     # Gemini's Schema is an OpenAPI subset, not unrestricted JSON Schema.
     result = {k: v for k, v in schema.items() if k in {'type', 'description', 'enum', 'required'}}
+    if 'type' in result:
+        result['type'] = result['type'].upper()  # REST Schema.Type enum.
     if 'properties' in schema:
         result['properties'] = {k: _schema(v) for k, v in schema['properties'].items()}
     if 'items' in schema:

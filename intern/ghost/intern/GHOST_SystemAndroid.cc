@@ -34,6 +34,8 @@
 
 #include <cmath>
 #include <cstring>
+#include <memory>
+#include <cstdlib>
 #include <ctime>
 
 static android_app *g_android_app = nullptr;
@@ -384,6 +386,7 @@ int32_t GHOST_SystemAndroid::handleMotionEvent(AInputEvent *event)
   const size_t changed = size_t((AMotionEvent_getAction(event) &
                                  AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
                                 AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
+  if (action == AMOTION_EVENT_ACTION_DOWN) { g_mobile.begin_sequence(); }
   if (action == AMOTION_EVENT_ACTION_CANCEL) { g_mobile.cancel(); }
   if (action == AMOTION_EVENT_ACTION_DOWN || action == AMOTION_EVENT_ACTION_POINTER_DOWN) {
     if (changed < raw_count &&
@@ -754,7 +757,34 @@ static GHOST_TKey convertAndroidKey(int32_t keycode)
   if (keycode >= AKEYCODE_0 && keycode <= AKEYCODE_9) {
     return GHOST_TKey(GHOST_kKey0 + (keycode - AKEYCODE_0));
   }
+  if (keycode >= AKEYCODE_F1 && keycode <= AKEYCODE_F12) {
+    return GHOST_TKey(GHOST_kKeyF1 + (keycode - AKEYCODE_F1));
+  }
   switch (keycode) {
+    /* System IMEs such as Unexpected Keyboard emit real modifier keys for
+     * shortcuts. Paste's CTRL+V must reach the existing Blender keymap. */
+    case AKEYCODE_CTRL_LEFT:
+      return GHOST_kKeyLeftControl;
+    case AKEYCODE_CTRL_RIGHT:
+      return GHOST_kKeyRightControl;
+    case AKEYCODE_SHIFT_LEFT:
+      return GHOST_kKeyLeftShift;
+    case AKEYCODE_SHIFT_RIGHT:
+      return GHOST_kKeyRightShift;
+    case AKEYCODE_ALT_LEFT:
+      return GHOST_kKeyLeftAlt;
+    case AKEYCODE_ALT_RIGHT:
+      return GHOST_kKeyRightAlt;
+    case AKEYCODE_META_LEFT:
+      return GHOST_kKeyLeftOS;
+    case AKEYCODE_META_RIGHT:
+      return GHOST_kKeyRightOS;
+    case AKEYCODE_NUMPAD_DOT:
+      return GHOST_kKeyNumpadPeriod;
+    case AKEYCODE_MOVE_HOME:
+      return GHOST_kKeyHome;
+    case AKEYCODE_MOVE_END:
+      return GHOST_kKeyEnd;
     case AKEYCODE_SPACE:
       return GHOST_kKeySpace;
     case AKEYCODE_ENTER:
@@ -990,6 +1020,12 @@ char *GHOST_SystemAndroid::getClipboard(bool /*selection*/) const
   if (!env) {
     return nullptr;
   }
+  if (env->PushLocalFrame(24) < 0) { env->ExceptionClear(); return nullptr; }
+  const auto pop_frame = [](JNIEnv *e) {
+    if (e->ExceptionCheck()) { e->ExceptionClear(); }
+    e->PopLocalFrame(nullptr);
+  };
+  std::unique_ptr<JNIEnv, decltype(pop_frame)> frame(env, pop_frame);
   jobject activity = app_->activity->clazz;
   jobject manager = android_clipboard_manager(env, activity);
   if (!manager) {
@@ -1019,9 +1055,19 @@ char *GHOST_SystemAndroid::getClipboard(bool /*selection*/) const
   jmethodID to_string = env->GetMethodID(
       env->GetObjectClass(text), "toString", "()Ljava/lang/String;");
   jstring str = (jstring)env->CallObjectMethod(text, to_string);
-  const char *utf = env->GetStringUTFChars(str, nullptr);
-  char *result = strdup(utf);
-  env->ReleaseStringUTFChars(str, utf);
+  if (!str) { if (env->ExceptionCheck()) { env->ExceptionClear(); } return nullptr; }
+  /* Standard UTF-8 preserves supplementary Unicode in system-IME Paste. */
+  jmethodID bytes_method = env->GetMethodID(env->GetObjectClass(str), "getBytes",
+                                          "(Ljava/lang/String;)[B");
+  jstring encoding = env->NewStringUTF("UTF-8");
+  auto bytes = static_cast<jbyteArray>(env->CallObjectMethod(str, bytes_method, encoding));
+  if (env->ExceptionCheck() || !bytes) { env->ExceptionClear(); return nullptr; }
+  const jsize length = env->GetArrayLength(bytes);
+  char *result = static_cast<char *>(malloc(size_t(length) + 1));
+  if (!result) { return nullptr; }
+  env->GetByteArrayRegion(bytes, 0, length, reinterpret_cast<jbyte *>(result));
+  result[length] = '\0';
+  if (env->ExceptionCheck()) { env->ExceptionClear(); free(result); return nullptr; }
   return result;
 }
 

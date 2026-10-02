@@ -40,6 +40,12 @@ assert result['ok'] and bpy.data.objects.get('CopilotTest') is None, result
 result = registry.execute('run_bpy', {'source': "raise ValueError('QA exception')"})
 assert result['ok'] and not result['success'] and 'QA exception' in result['traceback'], result
 assert not registry.execute('run_bpy', {'source': 'bad syntax !'})['ok']
+result = registry.execute('run_bpy', {'source': "bpy.ops.mesh.primitive_cube_add(); bpy.context.object.name='PartialTest'; raise RuntimeError('partial')"})
+assert result['ok'] and not result['success'] and bpy.data.objects.get('PartialTest') is not None
+result = registry.execute('undo', {})
+assert result['ok'] and bpy.data.objects.get('PartialTest') is None
+result = registry.execute('capture_viewport', {}, context=types.SimpleNamespace(window=None, area=None, region=None))
+assert not result['ok'] and 'No suitable 3D Viewport' in result['error']
 
 rv = types.SimpleNamespace(view_rotation=Quaternion((1, 0, 0), math.pi / 2),
                            view_location=Vector((0, 0, 0)), view_distance=10,
@@ -73,6 +79,23 @@ _bpy.android_mobile_state = lambda: []
 _bpy.android_copilot = lambda action, payload: '{"ok":true,"configured":false}'
 sys.getandroidapilevel = lambda: 31
 import bl_android_zfold as ui
+import tempfile
+import base64
+import struct
+with tempfile.TemporaryDirectory(prefix='zfold-ref-qa-') as folder:
+    image = bpy.data.images.new('QA reference', 1100, 16)
+    image.filepath_raw = str(pathlib.Path(folder) / 'source.png')
+    image.file_format = 'PNG'
+    image.save()
+    path = image.filepath_raw
+    bpy.data.images.remove(image)
+    original = pathlib.Path(path).read_bytes()
+    count = len(bpy.data.images)
+    reference = ui._reference(path)
+    pixels = base64.b64decode(reference['data'])
+    assert pixels[:8] == b'\x89PNG\r\n\x1a\n'
+    assert struct.unpack('!II', pixels[16:24])[0] == 1024
+    assert pathlib.Path(path).read_bytes() == original and len(bpy.data.images) == count
 for _ in range(2):
     ui.register()
     assert hasattr(bpy.context.window_manager, 'zfold')

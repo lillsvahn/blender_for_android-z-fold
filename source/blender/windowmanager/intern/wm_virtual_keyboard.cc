@@ -58,6 +58,11 @@
 #include "BKE_context.hh"
 #include "BKE_screen.hh"
 
+#ifdef __ANDROID__
+#  include "RNA_access.hh"
+#  include "UI_interface_c.hh"
+#endif
+
 #include "GPU_immediate.hh"
 #include "GPU_matrix.hh"
 #include "GPU_state.hh"
@@ -1516,13 +1521,20 @@ bool wm_virtual_keyboard_ghost_event(wmWindowManager *wm,
   static int cursor[2] = {0, 0};
   static bool pressed = false;
   const auto on_keyboard = [&]() {
+    if (vk_point_is_owned(win, cursor)) { return false; }
     for (const ScrArea &area : win->global_areas.areabase) {
       if (area.spacetype != SPACE_STATUSBAR) { continue; }
       for (const ARegion &region : area.regionbase) {
-        if (RGN_ALIGN_ENUM_FROM_MASK(region.alignment) == RGN_ALIGN_LEFT &&
-            region.runtime->visible && BLI_rcti_isect_pt_v(&region.winrct, cursor))
-        {
-          return true;
+        if (!region.runtime->visible || !BLI_rcti_isect_pt_v(&region.winrct, cursor)) { continue; }
+        if (RGN_ALIGN_ENUM_FROM_MASK(region.alignment) == RGN_ALIGN_LEFT) { return true; }
+        /* Old saved windows can have a single scrolling header. Use the
+         * existing UI button/operator identity; do not guess its width. */
+        const rcti point = {cursor[0], cursor[0] + 1, cursor[1], cursor[1] + 1};
+        if (ui::Button *button = ui::region_but_find_rect_over(&region, &point)) {
+          PointerRNA *props = ui::button_operator_ptr_ensure(button);
+          if (props && STREQ(RNA_struct_identifier(props->type), "WM_OT_virtual_keyboard_toggle")) {
+            return true;
+          }
         }
       }
     }
