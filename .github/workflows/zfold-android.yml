@@ -17,8 +17,6 @@ jobs:
     runs-on: [self-hosted, linux, x64, blender-android]
     timeout-minutes: 1440
     env:
-      BUILD_BASE: ${{ runner.temp }}/zfold-build
-      BLENDER_ANDROID_KEYSTORE: ${{ runner.temp }}/zfold-signing.jks
       BLENDER_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ZFOLD_KEYSTORE_PASSWORD }}
       BLENDER_ANDROID_KEY_ALIAS: ${{ secrets.ZFOLD_KEY_ALIAS }}
       BLENDER_ANDROID_KEY_PASSWORD: ${{ secrets.ZFOLD_KEY_PASSWORD }}
@@ -26,6 +24,11 @@ jobs:
       ANDROID_ABI: arm64-v8a
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
+      - name: Initialize workspace paths on the runner
+        shell: bash
+        run: |
+          printf 'BUILD_BASE=%s/zfold-build\nBLENDER_ANDROID_KEYSTORE=%s/zfold-signing.jks\n' \
+            "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           ref: zfold-v0.1.0

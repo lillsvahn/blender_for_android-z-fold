@@ -24,6 +24,8 @@ for file in [*ROOT.glob('scripts/modules/bl_android_copilot/*.py'),
              ROOT / 'build_files/android/build.py']:
     ast.parse(file.read_text(), filename=str(file))
 run(['git', 'diff', '--check'])
+if shutil.which('actionlint'):
+    run(['actionlint', '-shellcheck=', '.github/workflows/zfold-android.yml'])
 run([sys.executable, TESTS / 'test_core.py'])
 for file in ['build_files/android/apk/package.sh', 'build_files/android/apk/sign.sh',
              'build_files/android/build_apk.sh', 'build_files/android/fastdeploy.sh', 'build_files/android/deps/build.sh']:

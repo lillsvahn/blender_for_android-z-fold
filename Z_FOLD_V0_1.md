@@ -31,7 +31,7 @@
 | `build_files/android/{build.py,build_apk.sh,fastdeploy.sh,deps/build.sh}` | Respektera provisionerad SDK/NDK, begränsa parallellism och gemensam signering |
 | `build_files/android/apk/{package.sh,sign.sh}`, manifest | Kompilera båda Java-klasserna, färsk payload, stabil signering/version |
 | `build_files/android/zfold_preflight.py`, `tests/*` | Billiga kontroller, resursgate och kontroll av färdig APK |
-| `.github/workflows/zfold-android.yml` | Endast manuell Full ARM64-build på provisionerad runner |
+| `.github/workflows/zfold-android.yml`, `.github/actionlint.yaml` | Endast manuell Full ARM64-build på provisionerad runner; lint för egen runner-label |
 | `ANDROID_AI_GUIDE.md`, detta dokument | Hänvisning och projektspecifik överlämning |
 
 `space_statusbar.py`, `interface_handlers.cc` och vanliga keymaps är oförändrade:
@@ -180,6 +180,7 @@ blender --background --factory-startup --threads 1 --python-exit-code 1 \
 
 Utfört: Python syntax, shell syntax, diff-whitespace, 12 host-tester av registry/
 loop/quota/cancel/PNG, C++ touch-ägande och Java-kompilering mot SDK 35/JDK 17.
+Workflow passerar actionlint 1.7.12, inklusive GitHub expression-contexts.
 Endast sju befintliga immersive-API deprecation-warnings finns i Java.
 GHOST_SystemAndroid.cc och GHOST_AndroidMain.cc passerar NDK 28.2 ARM64 API 31
 syntaxkontroll med warnings-as-errors; privata `_bpy`-wrappers passerar host-
@@ -220,7 +221,10 @@ och JAVA_HOME i runner-processens miljö. Sätt två parallella jobb vid 16 GB R
 Efter granskning kan enbart denna workflow-fil kopieras/mergas till main, eller
 arbetsbranchen göras till default branch. Workflow checkar alltid ut
 `zfold-v0.1.0`; main-kod ska aldrig automatiskt blandas in i bygget. Detta arbete
-ändrar inte main/default branch och startar inte någon run.
+ändrar inte main/default branch och startar inte några runner-jobb eller Full-builds.
+Runner-sökvägar initieras i ett step via RUNNER_TEMP/GITHUB_ENV, eftersom
+runner-context inte är tillåtet i job.env. Två tidigare workflow-valideringsfel
+syns i Actions-historiken, utan några jobb, build-minuter eller artifacts.
 
 Workspace-livslängd:
 
